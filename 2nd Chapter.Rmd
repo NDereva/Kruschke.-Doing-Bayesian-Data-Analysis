@@ -1,0 +1,234 @@
+---
+title: "2nd Chapter"
+author: "Mykola Dereva"
+date: "4/20/2021"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(tidybayes)
+library(brms)
+```
+
+
+
+```{r}
+# set the seed to make the simulation reproducible
+set.seed(2)
+# simulate the data with `rnorm()`
+d <- tibble(x = rnorm(2000, mean = 10, sd = 5))
+
+# plot!
+ggplot(data = d, aes(x = x)) +
+  geom_histogram(aes(y = ..density..),
+                 binwidth = 1, fill = "grey67", 
+                 color = "grey92", size = 1/10) +
+  geom_line(data = tibble(x = seq(from = -6, to = 26, by = .01)),
+            aes(x = x, y = dnorm(x, mean = 10, sd = 5)),
+            color = "grey33") +
+  coord_cartesian(xlim = c(-5, 25)) +
+  labs(subtitle = "The candidate normal distribution\nhas a mean of 10 and SD of 5.",
+       x = "Data Values", 
+       y = "Data Probability") +
+  theme(panel.grid = element_blank())
+```
+
+
+```{r}
+ggplot(data = d, aes(x = x)) +
+  geom_histogram(aes(y = ..density..),
+                 binwidth = 1, fill = "grey67",
+                 color = "grey92", size = 1/8) +
+  stat_function(fun = dnorm, n = 101, args = list(mean = 8, sd = 6),
+                color = "grey33", linetype = 2) +
+  coord_cartesian(xlim = c(-5, 25)) +
+  labs(subtitle = "The candidate normal distribution\nhas a mean of 8 and SD of 6.",
+       x = "Data Values", 
+       y = "Data Probability") +
+  theme(panel.grid = element_blank())
+```
+
+
+```{r}
+HtWtDataGenerator <- function(nSubj, rndsd = NULL, maleProb = 0.50) {
+  # Random height, weight generator for males and females. Uses parameters from
+  # Brainard, J. & Burmaster, D. E. (1992). Bivariate distributions for height and
+  # weight of men and women in the United States. Risk Analysis, 12(2), 267-275.
+  # Kruschke, J. K. (2011). Doing Bayesian data analysis:
+  # A Tutorial with R and BUGS. Academic Press / Elsevier.
+  # Kruschke, J. K. (2014). Doing Bayesian data analysis, 2nd Edition:
+  # A Tutorial with R, JAGS and Stan. Academic Press / Elsevier.
+  
+  # require(MASS)
+  
+  # Specify parameters of multivariate normal (MVN) distributions.
+  # Men:
+  HtMmu   <- 69.18
+  HtMsd   <- 2.87
+  lnWtMmu <- 5.14
+  lnWtMsd <- 0.17
+  Mrho    <- 0.42
+  Mmean   <- c(HtMmu, lnWtMmu)
+  Msigma  <- matrix(c(HtMsd^2, Mrho * HtMsd * lnWtMsd,
+                      Mrho * HtMsd * lnWtMsd, lnWtMsd^2), nrow = 2)
+  # Women cluster 1:
+  HtFmu1   <- 63.11
+  HtFsd1   <- 2.76
+  lnWtFmu1 <- 5.06
+  lnWtFsd1 <- 0.24
+  Frho1    <- 0.41
+  prop1    <- 0.46
+  Fmean1   <- c(HtFmu1, lnWtFmu1)
+  Fsigma1  <- matrix(c(HtFsd1^2, Frho1 * HtFsd1 * lnWtFsd1,
+                       Frho1 * HtFsd1 * lnWtFsd1, lnWtFsd1^2), nrow = 2)
+  # Women cluster 2:
+  HtFmu2   <- 64.36
+  HtFsd2   <- 2.49
+  lnWtFmu2 <- 4.86
+  lnWtFsd2 <- 0.14
+  Frho2    <- 0.44
+  prop2    <- 1 - prop1
+  Fmean2   <- c(HtFmu2, lnWtFmu2)
+  Fsigma2  <- matrix(c(HtFsd2^2, Frho2 * HtFsd2 * lnWtFsd2,
+                       Frho2 * HtFsd2 * lnWtFsd2, lnWtFsd2^2), nrow = 2)
+  
+  # Randomly generate data values from those MVN distributions.
+  if (!is.null(rndsd)) {set.seed(rndsd)}
+  datamatrix <- matrix(0, nrow = nSubj, ncol = 3)
+  colnames(datamatrix) <- c("male", "height", "weight")
+  maleval <- 1; femaleval <- 0 # arbitrary coding values
+  for (i in 1:nSubj)  {
+    # Flip coin to decide sex
+    sex <- sample(c(maleval, femaleval), size = 1, replace = TRUE,
+                  prob = c(maleProb, 1 - maleProb))
+    if (sex == maleval) {datum = MASS::mvrnorm(n = 1, mu = Mmean, Sigma = Msigma)}
+    if (sex == femaleval) {
+      Fclust = sample(c(1, 2), size = 1, replace = TRUE, prob = c(prop1, prop2))
+      if (Fclust == 1) {datum = MASS::mvrnorm(n = 1, mu = Fmean1, Sigma = Fsigma1)}
+      if (Fclust == 2) {datum = MASS::mvrnorm(n = 1, mu = Fmean2, Sigma = Fsigma2)}
+    }
+    datamatrix[i, ] = c(sex, round(c(datum[1], exp(datum[2])), 1))
+  }
+  
+  return(datamatrix)
+} # end function
+```
+
+
+
+```{r}
+# set your seed to make the data generation reproducible
+set.seed(2)
+
+d <-
+  HtWtDataGenerator(nSubj = 57, maleProb = .5) %>%
+  as_tibble()
+
+d %>%
+  head()
+```
+
+
+
+```{r}
+fit2.1 <- 
+  brm(data = d, 
+      family = gaussian,
+      weight ~ 1 + height,
+      prior = c(prior(normal(0, 50), class = Intercept),
+                prior(normal(0, 5), class = b),
+                prior(exponential(1),  class = sigma)),
+      chains = 4, cores = 4, iter = 2000, warmup = 1000,
+      seed = 2,
+      file = "fits/fit02.01")
+```
+
+```{r}
+print(fit2.1)
+```
+
+
+
+```{r}
+# extract the posterior draws
+post <- posterior_samples(fit2.1)
+
+# this will streamline some of the code, below
+n_lines <- 150
+
+# plot!
+d %>% 
+  ggplot(aes(x = height, y = weight)) +
+  geom_abline(intercept = post[1:n_lines, 1], 
+              slope     = post[1:n_lines, 2],
+              color = "grey50", size = 1/4, alpha = .1) +
+  geom_point(shape = 1, size = 2) +
+  # the `eval(substitute(paste()))` trick came from: https://www.r-bloggers.com/value-of-an-r-object-in-an-expression/
+  labs(subtitle = eval(substitute(paste("Data with", n_lines, "credible regression lines"))),
+       x = "Height in inches",
+       y = "Weight in pounds") +
+  coord_cartesian(xlim = c(55, 80),
+                  ylim = c(50, 250)) +
+  theme(panel.grid = element_blank())
+```
+
+
+
+```{r}
+
+post %>% 
+  ggplot(aes(x = b_height, y = 0)) +
+  stat_histinterval(point_interval = mode_hdi, .width = .95,
+                    fill = "grey67", slab_color = "grey92",
+                    breaks = 40, slab_size = .2, outline_bars = T) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(0, 8)) +
+  labs(title = "The posterior distribution",
+       subtitle = "The mode and 95% HPD intervals are\nthe dot and horizontal line at the bottom.",
+       x = expression(paste(beta[1], " (slope)"))) +
+  theme(panel.grid = element_blank())
+```
+
+
+```{r}
+nd <- tibble(height = seq(from = 53, to = 81, length.out = 20))
+
+predict(fit2.1, newdata = nd) %>%
+  data.frame() %>%
+  bind_cols(nd) %>% 
+
+  ggplot(aes(x = height)) +
+  geom_pointrange(aes(y = Estimate, ymin = Q2.5, ymax = Q97.5),
+                  color = "grey67", shape = 20) +
+  geom_point(data =  d, 
+             aes(y = weight),
+             alpha = 2/3) +
+  labs(subtitle = "Data with the percentile-based 95% intervals and\nthe means of the posterior predictions",
+       x = "Height in inches",
+       y = "Weight in inches") +
+  theme(panel.grid = element_blank())
+```
+
+
+```{r}
+nd <- tibble(height = seq(from = 53, to = 81, length.out = 30))
+
+predict(fit2.1, newdata = nd) %>%
+  data.frame() %>%
+  bind_cols(nd) %>% 
+
+  ggplot(aes(x = height)) +
+  geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5), fill = "grey75") +
+  geom_line(aes(y = Estimate),
+            color = "black") +
+  geom_point(data =  d, 
+             aes(y = weight),
+             alpha = 1/2, shape = 1, size = 2) +
+  labs(subtitle = "Data with the percentile-based 95% intervals and\nthe means of the posterior predictions",
+       x = "Height in inches",
+       y = "Weight in inches") +
+  theme(panel.grid = element_blank())
+```
+
