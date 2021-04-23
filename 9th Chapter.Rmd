@@ -1,0 +1,518 @@
+---
+title: "9th Chapter"
+author: "Mykola Dereva"
+date: "4/23/2021"
+output: html_document
+---
+```{r}
+rm(list = ls())
+library(tidyverse)
+library(brms)
+library(here)
+library(cowplot)
+library(patchwork)
+```
+
+```{r}
+my_data <- read_csv(here("DBDA2Eprograms", "TherapeuticTouchData.csv"))
+
+glimpse(my_data)
+```
+
+```{r}
+my_data %>% 
+  mutate(y = y %>% as.character()) %>% 
+  
+  ggplot(aes(y = y)) +
+  geom_bar(aes(fill = stat(count))) +
+  scale_fill_viridis_c(option = "A", end = .7, breaks = NULL) +
+  scale_x_continuous(breaks = 0:4 * 2, expand = c(0, NA), limits = c(0, 9)) +
+  theme_minimal_vgrid() +
+  panel_border() +
+  facet_wrap(~s, ncol = 7)
+```
+
+
+
+```{r}
+my_data %>% 
+  group_by(s) %>% 
+  summarize(mean = mean(y)) %>%
+  
+  ggplot(aes(x = mean)) +
+  geom_histogram(color = "white", fill = "gray50",
+                 size = .2, binwidth = .1) +
+  scale_x_continuous("Proportion Correct", limits = c(0, 1)) +
+  scale_y_continuous("# Practitioners", expand = c(0, NA)) +
+  theme_minimal_hgrid()
+```
+
+
+```{r}
+fit9.1 <-
+  brm(data = my_data,
+      family = bernoulli(link = logit),
+      y ~ 1 + (1 | s),  # vary intercept by s
+      prior = c(prior(normal(0, 1.5), class = Intercept),
+                prior(normal(0, 1), class = sd)),
+      iter = 20000, warmup = 1000, thin = 10, chains = 4, cores = 4,
+      seed = 9,
+      file = "fits/fit09.01")
+```
+
+```{r}
+plot(fit9.1)
+```
+
+
+```{r}
+post <- posterior_samples(fit9.1, add_chain = T)
+
+library(bayesplot)
+```
+
+
+```{r}
+mcmc_acf(post, pars = c("b_Intercept", "sd_s__Intercept"), lags = 10) +
+  theme_minimal()
+```
+
+
+```{r}
+neff_ratio(fit9.1) %>% 
+  mcmc_neff() +
+  theme_cowplot(font_size = 10)
+```
+
+
+```{r}
+print(fit9.1)
+```
+
+
+
+```{r}
+library(tidybayes)
+
+post_small <-
+  post %>% 
+  # convert the linter model to the probability space with `inv_logit_scaled()`
+  mutate(`theta[1]`  = (b_Intercept + `r_s[S01,Intercept]`) %>% inv_logit_scaled(),
+         `theta[14]` = (b_Intercept + `r_s[S14,Intercept]`) %>% inv_logit_scaled(),
+         `theta[28]` = (b_Intercept + `r_s[S28,Intercept]`) %>% inv_logit_scaled()) %>% 
+  # make the difference distributions
+  mutate(`theta[1] - theta[14]`  = `theta[1]`  - `theta[14]`,
+         `theta[1] - theta[28]`  = `theta[1]`  - `theta[28]`,
+         `theta[14] - theta[28]` = `theta[14]` - `theta[28]`) %>% 
+  select(starts_with("theta"))
+
+post_small %>% 
+  gather() %>% 
+  # this line is unnecessary, but will help order the plots 
+  mutate(key = factor(key, levels = c("theta[1]", "theta[14]", "theta[28]", 
+                                      "theta[1] - theta[14]", "theta[1] - theta[28]", "theta[14] - theta[28]"))) %>% 
+
+  ggplot(aes(x = value, y = 0)) +
+  stat_histinterval(point_interval = mode_hdi, .width = .95,
+                    fill = "gray50", breaks = 40, normalize = "panels") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab(NULL) +
+  theme_minimal_hgrid() +
+  facet_wrap(~key, scales = "free", ncol = 3)
+```
+
+
+```{r}
+# the tibble of the primary data
+sigmas <-
+  coef(fit9.1, summary = F)$s %>% 
+  as_tibble() %>% 
+  mutate(iter = 1:n()) %>% 
+  group_by(iter) %>% 
+  gather(key, value, -iter) %>% 
+  mutate(theta = inv_logit_scaled(value)) %>% 
+  summarise(sd = sd(theta))
+
+# this, again, is just to customize `scale_x_continuous()`
+labels <-
+  sigmas %>% 
+  mode_hdi(sd) %>% 
+  select(sd:.upper) %>% 
+  gather() %>% 
+  mutate(label = value %>% round(3) %>% as.character) %>% 
+  slice(1:3)
+  
+# the plot
+sigmas %>% 
+  ggplot(aes(x = sd, y = 0)) +
+  stat_histinterval(point_interval = mode_hdi, .width = .95,
+                    fill = "gray50", breaks = 40) +
+  scale_x_continuous(expression(paste(sigma, " of ", theta, " in a probability metric")),
+                     breaks = labels$value,
+                     labels = labels$label) +  
+  scale_y_continuous(NULL, breaks = NULL) +
+  theme_minimal_hgrid()
+```
+
+
+
+```{r}
+# define a function
+r_norm <- function(i, n = 1e4) {
+  
+  set.seed(1)
+  rnorm(n = n, mean = 0, sd = i) %>% 
+    inv_logit_scaled()
+  
+}
+
+# simulate and wrangle
+tibble(sd = seq(from = .25, to = 3, by = .25)) %>% 
+  group_by(sd) %>% 
+  mutate(prior = map(sd, r_norm)) %>% 
+  unnest(prior) %>% 
+  ungroup() %>% 
+  mutate(sd = str_c("sd = ", sd)) %>% 
+  
+  # plot!
+  ggplot(aes(x = prior)) +
+  geom_histogram(fill = "gray50", color = "white", size = .2,
+                 binwidth = .05, boundary = 0) +
+  scale_x_continuous(labels = c("0", ".25", ".5", ".75", "1")) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_minimal_hgrid() +
+  panel_border() +
+  facet_wrap(~sd)
+```
+
+
+
+```{r}
+fit9.1_prior <-
+  brm(data = my_data,
+      family = bernoulli(link = logit),
+      y ~ 1 + (1 | s),
+      prior = c(prior(normal(0, 1.5), class = Intercept),
+                prior(normal(0, 1), class = sd)),
+      iter = 20000, warmup = 1000, thin = 10, chains = 4, cores = 4,
+      seed = 9,
+      sample_prior = "only",
+      file = "fits/fit09.01_prior")
+```
+
+
+```{r}
+prior <-
+  posterior_samples(fit9.1_prior) %>% 
+  as_tibble()
+
+head(prior)
+```
+
+
+```{r}
+prior_samples <-
+  prior %>% 
+  transmute(`theta[1]`  = b_Intercept + `r_s[S01,Intercept]`,
+            `theta[14]` = b_Intercept + `r_s[S14,Intercept]`,
+            `theta[28]` = b_Intercept + `r_s[S28,Intercept]`) %>% 
+  mutate_all(.funs = inv_logit_scaled)
+
+head(prior_samples)
+```
+
+
+```{r}
+prior_samples %>% 
+  gather() %>% 
+  
+  ggplot(aes(x = value)) +
+  geom_histogram(fill = "gray50", color = "white", size = .2,
+                 binwidth = .05, boundary = 0) +
+  scale_x_continuous(labels = c("0", ".25", ".5", ".75", "1")) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_minimal_hgrid() +
+  panel_border() +
+  facet_wrap(~key)
+```
+
+
+```{r}
+prior_samples %>% 
+  transmute(`theta[1] - theta[14]`  = `theta[1]`  - `theta[14]`,
+            `theta[1] - theta[28]`  = `theta[1]`  - `theta[28]`,
+            `theta[14] - theta[28]` = `theta[14]` - `theta[28]`) %>% 
+  gather() %>% 
+
+  ggplot(aes(x = value)) +
+  geom_histogram(fill = "gray50", color = "white", size = .2,
+                 binwidth = .05, boundary = 0) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  theme_minimal_hgrid() +
+  panel_border() +
+  facet_wrap(~key)
+```
+
+
+
+
+```{r}
+my_data <- read_csv(here("DBDA2Eprograms","BattingAverage.csv"))
+
+glimpse(my_data)
+```
+
+
+
+```{r}
+my_data %>% 
+  group_by(PriPos) %>% 
+  summarise(n      = n(),
+            median = median(AtBats)) %>% 
+  arrange(desc(n))
+```
+
+
+```{r}
+fit9.2 <-
+  brm(data = my_data,
+      family = binomial(link = logit),
+      Hits | trials(AtBats) ~ 1 + (1 | PriPos) + (1 | PriPos:Player),
+      prior = c(prior(normal(0, 1), class = Intercept),
+                prior(normal(0, 1), class = sd)),
+      iter = 3500, warmup = 1000, chains = 3, cores = 3,
+      control = list(adapt_delta = .99),
+      seed = 9,
+      file = "fits/fit09.02")
+```
+
+```{r}
+print(fit9.2)
+```
+
+
+```{r}
+plot(fit9.2)
+```
+
+
+
+```{r}
+post <- posterior_samples(fit9.2, add_chain = T)
+
+mcmc_acf(post, pars = c("b_Intercept", 
+                        "sd_PriPos__Intercept", 
+                        "sd_PriPos:Player__Intercept"), lags = 8) +
+  theme_minimal_hgrid()
+```
+
+
+
+```{r}
+post_small <-
+  post %>% 
+  transmute(`1st Base` = (b_Intercept + `r_PriPos[1st.Base,Intercept]`), 
+            Catcher    = (b_Intercept + `r_PriPos[Catcher,Intercept]`), 
+            Pitcher    = (b_Intercept + `r_PriPos[Pitcher,Intercept]`)) %>% 
+  mutate_all(inv_logit_scaled) %>% 
+  # here we compute our difference distributions
+  mutate(`Pitcher - Catcher`  = Pitcher - Catcher,
+         `Catcher - 1st Base` = Catcher - `1st Base`)
+
+head(post_small)
+```
+
+
+```{r}
+make_histogram <- function(data, mapping, title, xlim, ...) {
+  
+  ggplot(data, mapping) +
+    geom_histogram(fill = viridis::viridis_pal(option = "A")(9)[4], 
+                   color = "white", size = .2,
+                   bins = 30) +
+    stat_pointinterval(aes(y = 0), 
+                       point_interval = mode_hdi, .width = .95) +
+    scale_y_continuous(NULL, breaks = NULL) +
+    labs(title = title,
+         x = expression(theta)) +
+    coord_cartesian(xlim = xlim) +
+    theme_minimal_hgrid() +
+    panel_border()
+  
+}
+```
+
+
+```{r}
+make_point <- function(data, mapping, limits, ...) {
+  
+  ggplot(data, mapping) +
+    geom_abline(linetype = 3, color = "grey50") +
+    geom_point(color = viridis::viridis_pal(option = "A")(9)[4], 
+               size = 1/10, alpha = 1/20) +
+    coord_cartesian(xlim = limits,
+                    ylim = limits) +
+    theme_minimal_grid(line_size = 0) +
+    panel_border()
+  
+}
+```
+
+
+```{r}
+p1 <-
+  make_histogram(data = post_small,
+                 aes(x = Pitcher), 
+                 title = "Pitcher", 
+                 xlim = c(.1, .25))
+
+p2 <-
+  make_histogram(data = post_small,
+                 aes(x = `Pitcher - Catcher`), 
+                 title = "Pitcher - Catcher", 
+                 xlim = c(-.15, 0))
+
+p3 <-
+  make_point(data = post_small,
+             aes(x = Pitcher, y = Catcher),
+             limits = c(.12, .25))
+
+p4 <-
+  make_histogram(data = post_small,
+                 aes(x = Catcher), 
+                 title = "Catcher", 
+                 xlim = c(.1, .25))
+
+p1 + p2 + p3 + p4
+```
+
+
+```{r}
+coef_primary_position <-
+  coef(fit9.2, summary = F)$PriPos %>% 
+  as_tibble()
+  
+str(coef_primary_position)
+```
+
+
+```{r}
+coef_small <-
+  coef_primary_position %>% 
+  select(`1st Base.Intercept`, Catcher.Intercept, Pitcher.Intercept) %>% 
+  transmute(`1st Base` = `1st Base.Intercept`, 
+            Catcher    = Catcher.Intercept, 
+            Pitcher    = Pitcher.Intercept) %>% 
+  mutate_all(inv_logit_scaled) %>% 
+  # here we make the difference distributions
+  mutate(`Pitcher - Catcher`  = Pitcher - Catcher,
+         `Catcher - 1st Base` = Catcher - `1st Base`)
+
+head(coef_small)
+```
+
+
+```{r}
+p1 <-
+  make_histogram(data = coef_small,
+                 aes(x = Catcher), 
+                 title = "Catcher", 
+                 xlim = c(.22, .27))
+
+p2 <-
+  make_histogram(data = coef_small,
+                 aes(x = `Catcher - 1st Base`), 
+                 title = "Catcher - 1st Base", 
+                 xlim = c(-.04, .01))
+
+p3 <-
+  make_point(data = coef_small,
+             aes(x = Catcher, y = `1st Base`),
+             limits = c(.22, .27))
+
+p4 <-
+  make_histogram(data = coef_small,
+                 aes(x = `1st Base`), 
+                 title = "1st Base", 
+                 xlim = c(.22, .27))
+
+p1 + p2 + p3 + p4
+```
+
+
+```{r}
+nd <-
+  my_data %>% 
+  group_by(PriPos) %>% 
+  summarise(AtBats = mean(AtBats) %>% round(digits = 0))
+
+fitted_positions <-
+  fitted(fit9.2, 
+         newdata = nd,
+         re_formula = ~ (1 | PriPos),
+         scale = "linear",
+         summary = F) %>% 
+  as_tibble() %>% 
+  set_names(distinct(my_data, PriPos) %>% arrange(PriPos) %>% pull()) %>% 
+  mutate_all(inv_logit_scaled)
+    
+glimpse(fitted_positions)
+```
+
+
+```{r}
+p1 <-
+  fitted_positions %>% 
+  pivot_longer(everything(),
+               values_to = "theta") %>% 
+  # though technically not needed, this line reorders the panels to match the text
+  mutate(name = factor(name,
+                       levels = c("1st Base", "Catcher", "Pitcher",
+                                  "2nd Base", "Center Field", "Right Field",
+                                  "3rd Base", "Left Field", "Shortstop"))) %>% 
+  
+  ggplot(aes(x = theta)) +
+  geom_histogram(fill = "gray50", color = "white", 
+                 size = .1, binwidth = .0025) +
+  stat_pointinterval(aes(y = 0), 
+                     point_interval = mode_hdi, .width = .95, size = 1) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab(expression(theta)) +
+  coord_cartesian(xlim = c(.1, .28)) +
+  theme_minimal_hgrid() +
+  panel_border() +
+  facet_wrap(~name, nrow = 3, scales = "free_y")
+```
+
+
+```{r}
+p2 <-
+  fixef(fit9.2, summary = F) %>% 
+  as_tibble() %>% 
+  transmute(theta = inv_logit_scaled(Intercept),
+            name = "Overall") %>% 
+  
+  ggplot(aes(x = theta)) +
+  geom_histogram(fill = "gray50", color = "white", 
+                 size = .2, binwidth = .005) +
+  stat_pointinterval(aes(y = 0), 
+                    point_interval = mode_hdi, .width = .95) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab(expression(theta)) +
+  coord_cartesian(xlim = c(.1, .28)) +
+  theme_minimal_hgrid() +
+  panel_border() +
+  facet_wrap(~name)
+```
+
+
+
+```{r}
+p3 <- plot_spacer()
+
+p1 + (p2 / p3 / p3) +
+  plot_layout(widths = c(3, 1))
+```
+
