@@ -1,0 +1,332 @@
+---
+title: "8th Chapter BRMS"
+author: "Mykola Dereva"
+date: "4/23/2021"
+output: html_document
+---
+```{r}
+library(tidyverse)
+library(brms)
+library(patchwork)
+library(here)
+library(cowplot)
+```
+
+
+```{r}
+my_data <- read_csv(here("DBDA2Eprograms", "z15N50.csv"))
+```
+
+```{r}
+glimpse(my_data)
+```
+
+
+```{r}
+my_data %>% 
+  mutate(y = y %>% as.character()) %>% 
+  
+  ggplot(aes(x = y)) +
+  geom_bar() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  theme_minimal_hgrid()
+```
+
+
+```{r}
+my_data %>% 
+  count()
+```
+
+
+```{r}
+fit8.1 <-
+  brm(data = my_data, 
+      family = bernoulli(link = identity),
+      formula = y ~ 1,
+      prior(beta(2, 2), class = Intercept),
+      iter = 500 + 3334, warmup = 500, chains = 3,
+      seed = 8,
+      file = "fits/fit08.01")
+```
+
+
+
+```{r}
+plot(fit8.1)
+```
+
+
+
+```{r}
+library(bayesplot)
+```
+
+
+```{r}
+post <- posterior_samples(fit8.1, add_chain = TRUE)
+```
+
+
+```{r}
+mcmc_dens_overlay(post, pars = c("b_Intercept")) +
+  theme_minimal_hgrid()
+```
+
+
+```{r}
+mcmc_acf(post, pars = "b_Intercept", lags = 35) +
+  theme_minimal_hgrid()
+```
+
+
+```{r}
+fit8.1_c <- as.mcmc(fit8.1)
+
+coda::gelman.plot(fit8.1_c[, "b_Intercept", ])
+```
+
+
+```{r}
+print(fit8.1)
+```
+
+
+
+
+```{r}
+print(fit8.1, prob = .5)
+```
+
+
+```{r}
+posterior_summary(fit8.1, probs = c(.025, .25, .75, .975))
+```
+
+
+
+```{r}
+head(post)
+```
+
+
+```{r}
+post %>% 
+  ggplot(aes(x = b_Intercept)) +
+  geom_histogram(color = "grey92", fill = "grey67",
+                 size = .2) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(title = "Theta via ggplot2::geom_histogram()",
+       x = expression(theta)) +
+  theme_minimal_hgrid()
+```
+
+
+```{r}
+mcmc_areas(
+  post, 
+  pars = c("b_Intercept"),
+  prob = 0.5,
+  prob_outer = 0.95,
+  point_est = "mean") +
+  scale_y_discrete(expand = expansion(mult = c(0, 0.05))) +
+  labs(title = "Theta via bayesplot::mcmc_areas()",
+       x = expression(theta)) +
+  theme_minimal_hgrid()
+```
+
+
+```{r}
+library(tidybayes)
+
+post %>% 
+  ggplot(aes(x = b_Intercept, y = 0)) +
+  stat_halfeye(point_interval = mode_hdi, .width = c(.95, .5)) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Theta via tidybayes::stat_halfeye()",
+       x = expression(theta)) +
+  theme_minimal_hgrid()
+```
+
+
+```{r}
+post %>% 
+  ggplot(aes(x = b_Intercept)) +
+  stat_pointinterval(aes(y = 1), point_interval = median_qi, .width = c(.95, .5)) +
+  stat_pointinterval(aes(y = 2), point_interval = mode_hdi,  .width = c(.95, .5)) +
+  scale_y_continuous(NULL, breaks = 1:2,
+                     labels = c("median_qi", "mode_hdi")) +
+  coord_cartesian(ylim = c(0, 3)) +
+  labs(title = "Theta via tidybayes::stat_pointinterval()",
+       x = expression(theta)) +
+  theme_minimal_vgrid() +
+  theme(axis.line.y.left = element_blank(),
+        axis.text.y = element_text(hjust = 0),
+        axis.ticks.y = element_blank(),
+        title = element_text(size = 10.5))
+```
+
+
+
+
+```{r}
+my_data <- read_csv(here("DBDA2Eprograms", "z6N8z2N7.csv"))
+
+glimpse(my_data)
+```
+
+
+```{r}
+library(ggthemes)
+
+my_data %>% 
+  mutate(y = y %>% as.character()) %>% 
+  
+  ggplot(aes(x = y, fill = s)) +
+  geom_bar(show.legend = F) +
+  scale_fill_colorblind() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  theme_minimal_hgrid() +
+  facet_wrap(~s)
+```
+
+
+```{r}
+fit8.2 <-
+  brm(data = my_data, 
+      family = bernoulli(identity),
+      y ~ 0 + s,
+      prior(beta(2, 2), class = b, lb = 0, ub = 1),
+      iter = 2000, warmup = 500, cores = 4, chains = 4,
+      seed = 8,
+      file = "fits/fit08.02")
+```
+
+
+```{r}
+plot(fit8.2)
+```
+
+
+```{r}
+print(fit8.2)
+```
+
+
+```{r}
+pairs(fit8.2,
+      off_diag_args = list(size = 1/3, alpha = 1/3)) 
+```
+
+
+```{r}
+post <- posterior_samples(fit8.2)
+
+post <-
+  post %>% 
+  rename(theta_Reginald = b_sReginald,
+         theta_Tony     = b_sTony) %>% 
+  mutate(`theta_Reginald - theta_Tony` = theta_Reginald - theta_Tony)
+
+glimpse(post)
+```
+
+
+```{r}
+gathered_post <-
+  post %>% 
+  select(starts_with("theta")) %>% 
+  gather() %>% 
+  mutate(key = factor(key, levels = c("theta_Reginald", "theta_Tony", "theta_Reginald - theta_Tony"))) 
+  
+gathered_post %>% 
+  ggplot(aes(x = value, y = 0, fill = key)) +
+  stat_histinterval(point_interval = mode_hdi, .width = .95,
+                    slab_color = "white", outline_bars = T,
+                    normalize = "panels") +
+  scale_fill_manual(values = colorblind_pal()(8)[2:4], breaks = NULL) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  theme_minimal_hgrid() +
+  facet_wrap(~key, scales = "free")
+```
+
+
+```{r}
+gathered_post %>% 
+  group_by(key) %>% 
+  mode_hdi()
+```
+
+
+```{r}
+fit8.3 <-
+  brm(data = my_data, 
+      family = bernoulli(identity),
+      y ~ 0 + s,
+      prior = c(prior(beta(2, 2), class = b, coef = sReginald),
+                prior(beta(2, 2), class = b, coef = sTony)),
+      iter = 2000, warmup = 500, cores = 4, chains = 4,
+      sample_prior = "only",
+      seed = 8,
+      file = "fits/fit08.03")
+```
+
+
+```{r}
+prior <- posterior_samples(fit8.3) %>% select(-lp__)
+
+head(prior)
+```
+
+
+```{r}
+my_data %>% 
+  group_by(s) %>% 
+  summarise(z = sum(y),
+            N = n()) %>% 
+  mutate(`z/N` = z / N)
+```
+
+
+```{r}
+d_line <-
+  tibble(value = c(.75, .286, .75 - .286),
+         key   =  factor(c("theta_Reginald", "theta_Tony", "theta_Reginald - theta_Tony"), 
+                         levels = c("theta_Reginald", "theta_Tony", "theta_Reginald - theta_Tony")))
+```
+
+
+```{r}
+prior %>% 
+  rename(theta_Reginald = b_sReginald,
+         theta_Tony     = b_sTony) %>% 
+  mutate(`theta_Reginald - theta_Tony` = theta_Reginald - theta_Tony) %>% 
+  gather() %>% 
+  mutate(key = factor(key, levels = c("theta_Reginald",
+                                      "theta_Tony",
+                                      "theta_Reginald - theta_Tony"))) %>%
+  
+  ggplot(aes(x = value, y = 0)) +
+  stat_histinterval(point_interval = mode_hdi, .width = .95,
+                    fill = colorblind_pal()(8)[5], normalize = "panels") +
+  geom_vline(data = d_line, 
+             aes(xintercept = value), 
+             linetype = 2) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(subtitle = expression("The dashed vertical lines mark off "*italic(z[s])/italic(N[s]))) +
+  theme_cowplot() +
+  facet_wrap(~key, scales = "free")
+```
+
+
+```{r}
+prior %>% 
+  rename(theta_Reginald = b_sReginald,
+         theta_Tony     = b_sTony) %>% 
+  
+  ggplot(aes(x = theta_Reginald, y = theta_Tony)) +
+  geom_point(alpha = 1/4, color = colorblind_pal()(8)[6]) +
+  coord_equal() +
+  theme_minimal_grid()
+```
+

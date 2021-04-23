@@ -1,0 +1,42 @@
+---
+title: "6th Chapter"
+author: "Mykola Dereva"
+date: "4/22/2021"
+output: html_document
+---
+```{r}
+library(tidyverse)
+```
+
+
+
+```{r}
+
+length <- 1e4
+
+d <-
+  crossing(shape1 = c(.1, 1:4),
+           shape2 = c(.1, 1:4)) %>%
+  expand(nesting(shape1, shape2),
+         x = seq(from = 0, to = 1, length.out = length)) %>% 
+  mutate(a     = str_c("a = ", shape1),
+         b     = str_c("b = ", shape2),
+         group = rep(1:length, each = 25))
+
+head(d)
+```
+
+
+```{r}
+d %>% 
+  ggplot(aes(x = x, group = group)) +
+  geom_line(aes(y = dbeta(x, shape1 = shape1, shape2 = shape2)),
+            color = "grey50", size = 1.25) +
+  scale_x_continuous(expression(theta), breaks = c(0, .5, 1)) +
+  coord_cartesian(ylim = c(0, 3)) +
+  labs(title = "Examples of the beta distribution",
+       y = expression(p(theta*"|"*a*", "*b))) +
+  theme(panel.grid = element_blank()) +
+  facet_grid(b~a)
+```
+
