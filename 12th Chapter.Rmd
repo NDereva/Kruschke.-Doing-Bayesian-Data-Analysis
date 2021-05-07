@@ -1,0 +1,291 @@
+---
+title: "12th Chapter"
+author: "Mykola Dereva"
+date: "5/7/2021"
+output: html_document
+---
+
+```{r}
+library(brms)
+library(tidyverse)
+library(tidybayes)
+```
+
+```{r}
+library(fishualize)
+
+scales::show_col(fish(n = 5, option = "Ostorhinchus_angustatus"))
+```
+
+
+```{r}
+library(tidyverse)
+library(cowplot)
+
+oa <- fish(n = 5, option = "Ostorhinchus_angustatus")
+
+theme_set(
+  theme_cowplot() +
+  theme(panel.background = element_rect(fill = oa[1], color = oa[1]),
+        strip.background = element_rect(fill = oa[3]),
+        strip.text = element_text(color = oa[5]))
+)
+
+oa
+```
+
+
+```{r}
+tibble(xmin = .45,
+       xmax = .55) %>% 
+ggplot() +
+  geom_rect(aes(xmin = xmin, xmax = xmax,
+                ymin = -Inf, ymax = Inf),
+            color = "transparent", fill = oa[2]) +
+  annotate(geom = "text", x = .5, y = .5, 
+           label = "ROPE", color = oa[5]) +
+  scale_x_continuous(breaks = 0:5 / 5, expand = expansion(mult = 0), limits = c(0, 1)) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Kruschke's coin flip ROPE",
+       x = expression(theta))
+```
+
+
+
+```{r}
+my_data <- read_csv(here::here("DBDA2Eprograms","BattingAverage.csv"))
+```
+
+
+
+```{r}
+fit9.2 <-
+  brm(data = my_data,
+      family = binomial(link = logit),
+      Hits | trials(AtBats) ~ 1 + (1 | PriPos) + (1 | PriPos:Player),
+      prior = c(prior(normal(0, 1.5), class = Intercept),
+                prior(normal(0, 1), class = sd)),
+      iter = 3500, warmup = 500, chains = 3, cores = 3,
+      control = list(adapt_delta = .99),
+      seed = 9,
+      file = "fits/fit09.02")
+```
+
+
+
+```{r}
+c <-
+  coef(fit9.2, summary = F)$PriPos %>% 
+  as_tibble()
+  
+str(c)
+```
+
+
+
+```{r}
+c_small <-
+  c %>%
+  mutate_all(inv_logit_scaled) %>% 
+  transmute(`Pitcher - Catcher`  = Pitcher.Intercept - Catcher.Intercept,
+            `Catcher - 1st Base` = Catcher.Intercept - `1st Base.Intercept`)
+
+head(c_small)
+```
+
+
+```{r}
+c_small %>% 
+  pivot_longer(everything()) %>%  
+  mutate(name = factor(name, levels = c("Pitcher - Catcher", "Catcher - 1st Base"))) %>% 
+  
+  ggplot(aes(x = value)) +
+  geom_rect(xmin = -0.05, xmax = 0.05,
+            ymin = -Inf,  ymax = Inf,
+            color = "transparent", fill = oa[2]) +
+  stat_histinterval(aes(y = 0),
+                    point_interval = mode_hdi, .width = .95,
+                    fill = oa[4], colour = oa[3], 
+                    breaks = 50, normalize = "panels") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "The ROPE ranges from −0.05 to +0.05",
+       x = expression(theta)) +
+  coord_cartesian(xlim = c(-.125, .125)) +
+  theme(legend.position = "none") +
+  facet_wrap(~ name, scales = "free")
+```
+
+
+
+```{r}
+# this will make life easier. just go with it
+name_list <- c("ShinSoo Choo", "Ichiro Suzuki")
+
+# we'll define the data we'd like to feed into `fitted()`, here
+nd <-
+  my_data %>% 
+  filter(Player %in% c(name_list)) %>% 
+  # these last two lines aren't typically necessary, but they allow us to 
+  # arrange the rows in the same order we find the names in Figures 9.15 and 9/16
+  mutate(Player = factor(Player, levels = c(name_list))) %>% 
+  arrange(Player)
+
+f <-
+  fitted(fit9.2, 
+         newdata = nd,
+         scale = "linear",
+         summary = F) %>% 
+  as_tibble() %>% 
+  mutate_all(inv_logit_scaled) %>% 
+  set_names(name_list) %>% 
+  # in this last section, we make our difference distributions 
+  mutate(`ShinSoo Choo - Ichiro Suzuki` = `ShinSoo Choo` - `Ichiro Suzuki`)
+    
+glimpse(f)
+```
+
+
+```{r}
+f %>% 
+  ggplot() +
+  geom_rect(xmin = -0.05, xmax = 0.05,
+            ymin = -Inf,  ymax = Inf,
+            color = "transparent", fill = oa[2]) +
+  stat_histinterval(aes(x = `ShinSoo Choo - Ichiro Suzuki`, y = 0),
+                    point_interval = mode_hdi, .width = .95,
+                    fill = oa[4], color = oa[3], breaks = 40) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "ShinSoo Choo - Ichiro Suzuki",
+       x = expression(theta)) +
+  coord_cartesian(xlim = c(-.125, .125))
+```
+
+
+
+
+## 12.2.3 Are different groups equal or not?
+
+```{r}
+# For each subject, specify the condition s/he was in,
+# the number of trials s/he experienced, and the number correct.
+n_g <- 20  # number of subjects per group
+n_t <- 20  # number of trials per subject
+
+set.seed(12)
+my_data <-
+  tibble(condition   = factor(c("Das Kruschke", "Mozart", "Bach", "Beethoven"),
+                              levels = c("Das Kruschke", "Mozart", "Bach", "Beethoven")),
+         group_means = c(.40, .50, .51, .52)) %>% 
+  expand(nesting(condition, group_means),
+         row = 1:20) %>% 
+  mutate(id  = 1:80,
+         n_g = n_g,
+         n_t = n_t) %>% 
+  mutate(n_recalled = rbinom(n_g, n_t, group_means))
+
+head(my_data)
+```
+
+
+```{r}
+my_data %>% 
+  group_by(condition) %>% 
+  summarise(mean_n_recalled = mean(n_recalled))
+```
+
+
+
+```{r}
+fit12.1 <-
+  brm(data = my_data, 
+      family = binomial,
+      n_recalled | trials(20) ~ 0 + condition,
+      prior(normal(0, 1.5), class = b),
+      iter = 3000, warmup = 1000, cores = 4, chains = 4,
+      seed = 12,
+      file = "fits/fit12.01") 
+```
+
+
+```{r}
+print(fit12.1)
+```
+
+
+```{r}
+post <-
+  fixef(fit12.1, summary = F) %>% 
+  as_tibble() %>% 
+  transmute(theta_1 = conditionDasKruschke, 
+            theta_2 = conditionMozart, 
+            theta_3 = conditionBach, 
+            theta_4 = conditionBeethoven) %>%
+  mutate_all(inv_logit_scaled) %>% 
+  transmute(`theta[1]-theta[2]` = theta_1 - theta_2,
+            `theta[1]-theta[3]` = theta_1 - theta_3,
+            `theta[1]-theta[4]` = theta_1 - theta_4,
+            `theta[2]-theta[3]` = theta_2 - theta_3,
+            `theta[2]-theta[4]` = theta_2 - theta_4,
+            `theta[3]-theta[4]` = theta_3 - theta_4)
+
+glimpse(post)
+```
+
+
+```{r}
+post %>% 
+  gather() %>% 
+  
+  ggplot(aes(x = value, y = 0)) +
+  geom_vline(xintercept = 0, color = oa[2]) +
+  stat_histinterval(point_interval = mode_hdi, .width = .95,
+                    fill = oa[4], color = oa[3],
+                    breaks = 30, normalize = "panels") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(-.25, .25)) +
+  facet_wrap(~ key, labeller = label_parsed)
+```
+
+
+```{r}
+fit12.2 <-
+  brm(data = my_data, 
+      family = binomial,
+      n_recalled | trials(20) ~ 1,
+      prior(normal(0, 1.5), class = Intercept),
+      iter = 3000, warmup = 1000, cores = 4, chains = 4,
+      seed = 12,
+      file = "fits/fit12.02") 
+```
+
+
+```{r}
+fit12.1 <- add_criterion(fit12.1, criterion = "waic")
+fit12.2 <- add_criterion(fit12.2, criterion = "waic")
+
+loo_compare(fit12.1, fit12.2, criterion = "waic") %>% 
+  print(simplify = F)
+```
+
+
+```{r}
+model_weights(fit12.1, fit12.2, weights = "waic") %>% 
+  round(digits = 3)
+```
+
+
+
+##  Hypothesis testing in brms.
+
+```{r}
+hypothesis(fit12.1, 
+           "inv_logit_scaled(conditionDasKruschke) < inv_logit_scaled(conditionBach)")
+```
+
+
+```{r}
+hypothesis(fit12.1, 
+           "inv_logit_scaled(conditionDasKruschke) < inv_logit_scaled(conditionBach)") %>% 
+  plot()
+```
+
